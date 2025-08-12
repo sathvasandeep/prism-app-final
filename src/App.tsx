@@ -12,6 +12,7 @@ import ExplorationQuestionsPage from './pages/ExplorationQuestionsPage';
 import InterestResultsPage from './pages/InterestResultsPage';
 import RolePreviewPage from './pages/RolePreviewPage';
 import CareerAssessmentPage from './pages/CareerAssessmentPage';
+import Stage3 from './pages/stages/Stage3';
 
 
 export default function App() {
@@ -33,6 +34,7 @@ export default function App() {
     <Route path="/interest-results" element={<InterestResultsPage />} />
     <Route path="/role-preview" element={<RolePreviewPage />} />
     <Route path="/career-assessment" element={<CareerAssessmentPage />} />
+    <Route path="/stage3" element={<Stage3 />} />
   </Routes>
 </BrowserRouter>
   );

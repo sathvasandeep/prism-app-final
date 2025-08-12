@@ -34,3 +34,24 @@ export async function generateObjectives(key: { profession: number|null; departm
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json() as Promise<{ levels: ObjectiveLevels; source: ObjectiveSource }>;
 }
+
+export async function generateArchetype(payload: {
+  profile_id: number;
+  profession: number;
+  department: number;
+  role: number;
+  skive: Record<string, Record<string, number>>;
+}) {
+  const res = await fetch('/api/archetype', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<{
+    radarData: Record<string, Record<string, number>>;
+    archetype: { name: string; narrative: string; globalName: string };
+    professionInfo: any;
+  }>;
+}
+

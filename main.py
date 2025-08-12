@@ -437,6 +437,68 @@ async def generate_dynamic_archetype(ratings: List[Dict], skive_category: str, c
     }
 
 # API Endpoints
+
+from pydantic import BaseModel
+from typing import Any
+
+class ArchetypeRequest(BaseModel):
+    profile_id: int
+    profession: int
+    department: int
+    role: int
+    skive: dict # {category: {subcategory: score}}
+
+@app.post("/api/archetype")
+async def generate_archetype(payload: ArchetypeRequest, conn = Depends(get_db_connection)):
+    """
+    Generate archetype narrative, radar data, and profession info for Stage 3.
+    Uses Gemini AI if enabled, otherwise deterministic phrase library logic.
+    """
+    # 1. Prepare radar data (normalize/aggregate as needed)
+    radar_data = payload.skive
+    # 2. Run dynamic archetype logic
+    all_ratings = []
+    for cat, subs in payload.skive.items():
+        for sub, score in subs.items():
+            all_ratings.append({"category": cat, "subcategory": sub, "score": score})
+    # 3. Use helpers to get signature/supporting/foundational and narrative
+    from models.phrase_library import get_proficiency_tier
+    signature = sorted(all_ratings, key=lambda x: -x["score"])[:3]
+    signature_names = [s["subcategory"] for s in signature]
+    tiers = {"high": [], "medium": [], "low": []}
+    for r in all_ratings:
+        tier = get_proficiency_tier(r["score"])
+        tiers[tier].append(r)
+    # 4. Compose narrative (fallback, not AI)
+    narrative = f"This role is defined by mastery of {', '.join(signature_names)}. Supported by {', '.join([s['subcategory'] for s in tiers['high'] if s not in signature])}. Built upon a foundation of {', '.join([s['subcategory'] for s in tiers['medium']])}."
+    # 5. Compose archetype name (simple fallback)
+    archetype_name = f"{'/'.join(signature_names)} Specialist"
+    # 6. Compose profession info (dummy for now)
+    profession_info = {
+        "title": "Sample Profession",
+        "summary": "A summary of the profession.",
+        "yearsToRole": 5,
+        "qualifications": ["Degree"],
+        "certifications": ["Certification"],
+        "salaryRange": "₹10-20LPA",
+        "perks": ["Perk1", "Perk2"],
+        "highs": "Highs of the profession",
+        "lows": "Lows of the profession",
+        "videoUrl": "https://www.youtube.com/embed/example",
+        "careerPathway": "Pathway"
+    }
+    # 7. TODO: If Gemini AI is enabled, call AI to generate narrative and info
+    # (Fallback above is always available)
+    return {
+        "radarData": radar_data,
+        "archetype": {
+            "name": archetype_name,
+            "narrative": narrative,
+            "globalName": "Global Archetype"
+        },
+        "professionInfo": profession_info
+    }
+
 @app.get("/")
 async def root():
     return {"message": "PRISM Framework API is running"}

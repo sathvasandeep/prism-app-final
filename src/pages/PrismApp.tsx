@@ -5,6 +5,7 @@ import type { FC, MouseEvent, KeyboardEvent, ChangeEvent } from 'react';
 import { Save, Sparkles, ListChecks, ClipboardList, ChevronDown } from 'lucide-react';
 import { RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from 'recharts';
 import Stage2 from './stages/Stage2';
+import Stage3 from './stages/Stage3';
 import { useProfessions, useDepartments, useRoles } from '../api/client';
 
 // --- TYPE DEFINITIONS ---
@@ -194,20 +195,7 @@ const EditableList: FC<EditableListProps> = ({ items, onChange, title, icon }) =
   );
 };
 
-const StagePlaceholder: FC<{ title: string; getProfileData?: () => any }> = ({ title, getProfileData }) => (
-  <div className="p-6">
-    <h2 className="text-xl font-semibold">{title}</h2>
-    <p className="text-gray-600 dark:text-gray-400 mt-2">Coming soon.</p>
-    {getProfileData && (
-      <div className="mt-4 p-4 bg-gray-100 dark:bg-gray-800 rounded-lg">
-        <h3 className="font-semibold mb-2">Available Data for Stage 3:</h3>
-        <pre className="text-xs overflow-auto max-h-40">
-          {JSON.stringify(getProfileData(), null, 2)}
-        </pre>
-      </div>
-    )}
-  </div>
-);
+
 
 const Stage1: FC<Stage1Props> = ({
   professions, departments, roles,
@@ -691,17 +679,7 @@ const PrismAdminApp: FC = () => {
     };
   };
 
-  const getProfileDataForStage3 = () => {
-    return {
-      profileName,
-      profession: selectedProfession,
-      department: selectedDept,
-      role: selectedRole,
-      dayToDay,
-      kras,
-      skiveData: getSkiveDataForStage3(),
-    };
-  };
+  
 
   // Handler for complex SKIVE changes (skills/knowledge with nested structure)
   const handleSkiveChange = (category: keyof SkiveRatings, subCategory: string, item: string, value: number) => {
@@ -794,7 +772,57 @@ const PrismAdminApp: FC = () => {
                   selectedRole={selectedRole}
                 />
               )}
-              {stage === 'stage3' && <StagePlaceholder title="Stage 3: Task Factory" getProfileData={getProfileDataForStage3} />}
+              {stage === 'stage3' &&
+  selectedProfession && selectedDept && selectedRole && getSkiveDataForStage3() ? (
+    <Stage3
+      profileId={1} // TODO: replace with real profile ID if available
+      profession={parseInt(selectedProfession, 10)}
+      department={parseInt(selectedDept, 10)}
+      role={parseInt(selectedRole, 10)}
+      skiveData={{
+        skills: Object.fromEntries(
+          Object.entries(skiveRatings.skills).flatMap(([sub, items]) =>
+            Object.entries(items as Record<string, number>).map(([k, v]) => [k, v])
+          )
+        ),
+        knowledge: Object.fromEntries(
+          Object.entries(skiveRatings.knowledge).flatMap(([sub, items]) =>
+            Object.entries(items as Record<string, number>).map(([k, v]) => [k, v])
+          )
+        ),
+        identity: skiveRatings.identity,
+        values: skiveRatings.values,
+        ethics: skiveRatings.ethics,
+        combined: {
+          Skills: (() => {
+            const vals = Object.values(skiveRatings.skills).flatMap(sub => Object.values(sub));
+            return vals.length > 0 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
+          })(),
+          Knowledge: (() => {
+            const vals = Object.values(skiveRatings.knowledge).flatMap(sub => Object.values(sub));
+            return vals.length > 0 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
+          })(),
+          Identity: (() => {
+            const vals = Object.values(skiveRatings.identity);
+            return vals.length > 0 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
+          })(),
+          Values: (() => {
+            const vals = Object.values(skiveRatings.values);
+            return vals.length > 0 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
+          })(),
+          Ethics: (() => {
+            const vals = Object.values(skiveRatings.ethics);
+            return vals.length > 0 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
+          })(),
+        }
+      }}
+      professionName={(professions.find(p => String(p.id) === selectedProfession)?.name) || undefined}
+      departmentName={(departments.find(d => String(d.id) === selectedDept)?.name) || undefined}
+      roleName={(roles.find(r => String(r.id) === selectedRole)?.name) || undefined}
+    />
+  ) : (
+    <div className="p-6 text-gray-500">Please complete Stage 1 and 2 to view your Role DNA Archetype.</div>
+  )}
             </div>
           </main>
         </div>
