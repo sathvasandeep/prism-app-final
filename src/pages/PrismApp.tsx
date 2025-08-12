@@ -52,23 +52,25 @@ interface Stage1Props {
   departments: SelectOption[];
   roles: SelectOption[];
   selectedProfession: string;
-  setSelectedProfession: React.Dispatch<React.SetStateAction<string>>;
+  setSelectedProfession: (value: string) => void;
   selectedDept: string;
-  setSelectedDept: React.Dispatch<React.SetStateAction<string>>;
+  setSelectedDept: (value: string) => void;
   selectedRole: string;
-  setSelectedRole: React.Dispatch<React.SetStateAction<string>>;
+  setSelectedRole: (value: string) => void;
   profileName: string;
-  setProfileName: React.Dispatch<React.SetStateAction<string>>;
+  setProfileName: (value: string) => void;
   dayToDay: string[];
-  setDayToDay: React.Dispatch<React.SetStateAction<string[]>>;
+  setDayToDay: (value: string[]) => void;
   kras: string[];
-  setKras: React.Dispatch<React.SetStateAction<string[]>>;
+  setKras: (value: string[]) => void;
+  dayToDaySource: 'default' | 'ai' | 'none';
+  krasSource: 'default' | 'ai' | 'none';
   skiveRatings: SkiveRatings;
-  setSkiveRatings: React.Dispatch<React.SetStateAction<SkiveRatings>>;
+  setSkiveRatings: (value: SkiveRatings) => void;
   competencyDescriptions: Record<string, string>;
-  handleSaveConfig: () => Promise<void>;
-  generateDayToDay: () => Promise<void>;
-  generateKras: () => Promise<void>;
+  handleSaveConfig: () => void;
+  generateDayToDay: () => void;
+  generateKras: () => void;
 }
 
 // --- REUSABLE CHILD COMPONENTS ---
@@ -202,6 +204,7 @@ const Stage1: FC<Stage1Props> = ({
   profileName, setProfileName,
   dayToDay, setDayToDay,
   kras, setKras,
+  dayToDaySource, krasSource,
   skiveRatings, setSkiveRatings,
   competencyDescriptions,
   handleSaveConfig, generateDayToDay, generateKras
@@ -275,23 +278,46 @@ const Stage1: FC<Stage1Props> = ({
       {selectedRole && (
         <div className="space-y-6">
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Profile Name</label>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Profile Name <span className="text-red-500">*</span></label>
             <input
               type="text"
               value={profileName}
               onChange={(e) => setProfileName(e.target.value)}
               placeholder="Enter a name for this role profile..."
+              required
               className="w-full p-2 border rounded bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600"
             />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <button onClick={generateDayToDay} className="flex items-center gap-2 text-sm text-blue-600 hover:underline"><Sparkles size={14} /> Generate Day-to-Day Activities</button>
+              <div className="flex items-center justify-between">
+                <button onClick={generateDayToDay} className="flex items-center gap-2 text-sm text-blue-600 hover:underline"><Sparkles size={14} /> Generate Day-to-Day Activities</button>
+                {dayToDaySource !== 'none' && (
+                  <div className={`px-2 py-1 rounded-full text-xs font-medium ${
+                    dayToDaySource === 'ai' 
+                      ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' 
+                      : 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200'
+                  }`}>
+                    {dayToDaySource === 'ai' ? '🤖 AI Generated' : '📋 Default Values'}
+                  </div>
+                )}
+              </div>
               <EditableList items={dayToDay} onChange={setDayToDay} title="Day-to-Day Activities" icon={<ListChecks size={20} />} />
             </div>
             <div className="space-y-2">
-              <button onClick={generateKras} className="flex items-center gap-2 text-sm text-blue-600 hover:underline"><Sparkles size={14} /> Generate KRAs</button>
+              <div className="flex items-center justify-between">
+                <button onClick={generateKras} className="flex items-center gap-2 text-sm text-blue-600 hover:underline"><Sparkles size={14} /> Generate KRAs</button>
+                {krasSource !== 'none' && (
+                  <div className={`px-2 py-1 rounded-full text-xs font-medium ${
+                    krasSource === 'ai' 
+                      ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' 
+                      : 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200'
+                  }`}>
+                    {krasSource === 'ai' ? '🤖 AI Generated' : '📋 Default Values'}
+                  </div>
+                )}
+              </div>
               <EditableList items={kras} onChange={setKras} title="Key Responsibility Areas (KRAs)" icon={<ClipboardList size={20} />} />
             </div>
           </div>
@@ -311,6 +337,7 @@ const Stage1: FC<Stage1Props> = ({
                         return (
                           <div key={subCategory} className="p-4 bg-white dark:bg-gray-800 rounded-md border border-gray-200 dark:border-gray-700">
                             <h4 className="mb-2 text-sm font-medium text-gray-700 dark:text-gray-300 capitalize">{subCategory.replace(/([A-Z])/g, ' $1')}</h4>
+                            <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">{competencyDescriptions[`${mainCategory}.${subCategory}`] || 'No description available.'}</p>
                             <RangeWithTicks value={items as unknown as number} onChange={(newValue) => handleSimpleSkiveChange(mainCategory as keyof SkiveRatings, subCategory, newValue)} />
                           </div>
                         );
@@ -373,6 +400,8 @@ const PrismAdminApp: FC = () => {
   const [profileName, setProfileName] = useState<string>('');
   const [dayToDay, setDayToDay] = useState<string[]>([]);
   const [kras, setKras] = useState<string[]>([]);
+  const [dayToDaySource, setDayToDaySource] = useState<'default' | 'ai' | 'none'>('none');
+  const [krasSource, setKrasSource] = useState<'default' | 'ai' | 'none'>('none');
   const [skiveRatings, setSkiveRatings] = useState<SkiveRatings>({
     skills: {
       cognitive: { analytical: 1, decisionMaking: 1, strategicPlanning: 1, criticalEvaluation: 1 },
@@ -413,16 +442,16 @@ const PrismAdminApp: FC = () => {
     techniques: "Skillful ways of carrying out a particular task",
     whenToApply: "Knowing when and why to use certain knowledge or skills",
     contextualUse: "Adapting knowledge application to specific situations",
-    professionalRole: "Embracing characteristic professional roles and behaviors",
-    communityBelonging: "Sense of belonging within the professional community",
-    selfEfficacy: "Confidence in professional capabilities",
-    dispositions: "Inherent qualities of mind and character (e.g., skepticism, curiosity)",
-    coreValues: "Fundamental values like patient well-being, innovation, excellence",
-    epistemicValues: "Values related to knowledge and evidence (e.g., empirical evidence, user-centricity)",
-    stakeholderValues: "Considering the values and needs of all relevant stakeholders",
-    deontological: "Adherence to professional codes and duty-based ethics",
-    consequentialist: "Considering outcomes and consequences in decision-making",
-    virtue: "Character traits like integrity, responsibility, and honesty",
+    "identity.professionalRole": "Embracing characteristic professional roles and behaviors",
+    "identity.communityBelonging": "Sense of belonging within the professional community",
+    "identity.selfEfficacy": "Confidence in professional capabilities",
+    "identity.dispositions": "Inherent qualities of mind and character (e.g., skepticism, curiosity)",
+    "values.coreValues": "Fundamental values like patient well-being, innovation, excellence",
+    "values.epistemicValues": "Values related to knowledge and evidence (e.g., empirical evidence, user-centricity)",
+    "values.stakeholderValues": "Considering the values and needs of all relevant stakeholders",
+    "ethics.deontological": "Adherence to professional codes and duty-based ethics",
+    "ethics.consequentialist": "Considering outcomes and consequences in decision-making",
+    "ethics.virtue": "Character traits like integrity, responsibility, and honesty",
   };
 
   useEffect(() => {
@@ -479,7 +508,7 @@ const PrismAdminApp: FC = () => {
   }, [selectedDept]);
 
   const handleSaveConfig = async () => {
-    if (!selectedRole || !profileName) {
+    if (!selectedRole || !profileName.trim()) {
       alert('Please select a role and provide a profile name.');
       return;
     }
@@ -511,7 +540,16 @@ const PrismAdminApp: FC = () => {
       }
       const result = await res.json();
       console.log('✅ Config saved successfully:', result);
-      alert(`✅ Profile saved successfully! Profile ID: ${result.profile_id}`);
+      // Show success message in a more user-friendly way
+      const successMessage = document.createElement('div');
+      successMessage.className = 'fixed top-4 right-4 bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg z-50';
+      successMessage.innerHTML = `✅ Profile "${profileName}" saved successfully!`;
+      document.body.appendChild(successMessage);
+      setTimeout(() => {
+        if (successMessage.parentNode) {
+          successMessage.parentNode.removeChild(successMessage);
+        }
+      }, 3000);
     } catch (err: any) {
       console.error('❌ Error saving config:', err);
       alert(`❌ Error saving profile: ${err.message}`);
@@ -519,54 +557,159 @@ const PrismAdminApp: FC = () => {
   };
 
   const generateDayToDay = async () => {
-    if (!selectedRole) return;
+    if (!selectedRole) {
+      alert('Please select a role first.');
+      return;
+    }
+    // Only generate if dayToDay is empty or user confirms
+    if (dayToDay.length > 0) {
+      const confirmed = confirm('This will replace existing day-to-day activities. Continue?');
+      if (!confirmed) return;
+    }
+    
+    console.log('🚀 Starting day-to-day generation...');
+    
     try {
-      const res = await fetch(`/api/suggestions/day_to_day/${selectedRole}`);
-      const data = await res.json();
-      setDayToDay(data.suggestions || []);
+      const payload = {
+        profession: selectedProfession ? parseInt(selectedProfession, 10) : null,
+        department: selectedDept ? parseInt(selectedDept, 10) : null,
+        role: parseInt(selectedRole, 10)
+      };
+      
+      console.log('📤 Sending payload to /api/ai/day_to_day:', payload);
+      
+      const res = await fetch('/api/ai/day_to_day', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      
+      console.log('📥 Response status:', res.status, res.statusText);
+      
+      if (res.ok) {
+        const data = await res.json();
+        console.log('📋 Raw response data:', data);
+        
+        const activities = data.items || data.suggestions || [];
+        setDayToDay(activities);
+        
+        // Use source field from backend response
+        const source = data.source || 'default';
+        setDayToDaySource(source);
+        
+        console.log(`✅ Day-to-day activities generated from ${source === 'ai' ? 'Gemini AI' : 'Default Logic'}:`, activities);
+      } else {
+        console.error('❌ Failed to generate day-to-day activities:', res.status, res.statusText);
+        const errorText = await res.text();
+        console.error('❌ Error response:', errorText);
+        alert('Failed to generate day-to-day activities. Please try again.');
+        setDayToDaySource('default');
+      }
     } catch (err) {
       console.error('❌ Error generating day-to-day activities:', err);
+      alert('Error generating day-to-day activities. Please check your connection.');
+      setDayToDaySource('default');
     }
   };
 
   const generateKras = async () => {
-    if (!selectedRole) return;
+    if (!selectedRole) {
+      alert('Please select a role first.');
+      return;
+    }
+    // Only generate if kras is empty or user confirms
+    if (kras.length > 0) {
+      const confirmed = confirm('This will replace existing KRAs. Continue?');
+      if (!confirmed) return;
+    }
+    
+    console.log('🚀 Starting KRAs generation...');
+    
     try {
-      const res = await fetch(`/api/suggestions/kras/${selectedRole}`);
-      const data = await res.json();
-      setKras(data.suggestions || []);
+      const payload = {
+        profession: selectedProfession ? parseInt(selectedProfession, 10) : null,
+        department: selectedDept ? parseInt(selectedDept, 10) : null,
+        role: parseInt(selectedRole, 10)
+      };
+      
+      console.log('📤 Sending payload to /api/ai/kras:', payload);
+      
+      const res = await fetch('/api/ai/kras', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      
+      console.log('📥 Response status:', res.status, res.statusText);
+      
+      if (res.ok) {
+        const data = await res.json();
+        console.log('📋 Raw response data:', data);
+        
+        const krasList = data.items || data.suggestions || [];
+        setKras(krasList);
+        
+        // Use source field from backend response
+        const source = data.source || 'default';
+        setKrasSource(source);
+        
+        console.log(`✅ KRAs generated from ${source === 'ai' ? 'Gemini AI' : 'Default Logic'}:`, krasList);
+      } else {
+        console.error('❌ Failed to generate KRAs:', res.status, res.statusText);
+        const errorText = await res.text();
+        console.error('❌ Error response:', errorText);
+        alert('Failed to generate KRAs. Please try again.');
+        setKrasSource('default');
+      }
     } catch (err) {
       console.error('❌ Error generating KRAs:', err);
+      alert('Error generating KRAs. Please check your connection.');
+      setKrasSource('default');
     }
   };
 
-  // Helper functions for Stage 3 data access
-  const getSkiveDataForStage3 = () => {
-    const avg = (vals: number[]) => (vals.length > 0 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0);
-    
+  // Helper function for calculating averages
+  const avg = (values: number[]): number => {
+    if (values.length === 0) return 0;
+    return values.reduce((sum, val) => sum + val, 0) / values.length;
+  };
+
+  // Function to generate radar chart data
+  const radarData = () => {
     const skillsVals = Object.values(skiveRatings.skills).flatMap(subcategory => Object.values(subcategory));
     const knowledgeVals = Object.values(skiveRatings.knowledge).flatMap(subcategory => Object.values(subcategory));
     const identityVals = Object.values(skiveRatings.identity);
     const valuesVals = Object.values(skiveRatings.values);
     const ethicsVals = Object.values(skiveRatings.ethics);
 
-    const radarChartData = [
+    return [
       { subject: 'Skills', A: avg(skillsVals as number[]) },
       { subject: 'Knowledge', A: avg(knowledgeVals as number[]) },
       { subject: 'Identity', A: avg(identityVals as number[]) },
       { subject: 'Values', A: avg(valuesVals as number[]) },
       { subject: 'Ethics', A: avg(ethicsVals as number[]) },
     ];
+  };
+
+  // Function to get comprehensive SKIVE data for Stage 3
+  const getSkiveDataForStage3 = () => {
+    const skillsVals = Object.values(skiveRatings.skills).flatMap(subcategory => Object.values(subcategory));
+    const knowledgeVals = Object.values(skiveRatings.knowledge).flatMap(subcategory => Object.values(subcategory));
+    const identityVals = Object.values(skiveRatings.identity);
+    const valuesVals = Object.values(skiveRatings.values);
+    const ethicsVals = Object.values(skiveRatings.ethics);
+    
+    const radarChartData = radarData();
 
     return {
       rawSkiveRatings: skiveRatings,
       radarChartData,
       categoryAverages: {
-        skills: radarChartData.find(item => item.subject === 'Skills')?.A || 0,
-        knowledge: radarChartData.find(item => item.subject === 'Knowledge')?.A || 0,
-        identity: radarChartData.find(item => item.subject === 'Identity')?.A || 0,
-        values: radarChartData.find(item => item.subject === 'Values')?.A || 0,
-        ethics: radarChartData.find(item => item.subject === 'Ethics')?.A || 0,
+        skills: radarChartData.find((item: any) => item.subject === 'Skills')?.A || 0,
+        knowledge: radarChartData.find((item: any) => item.subject === 'Knowledge')?.A || 0,
+        identity: radarChartData.find((item: any) => item.subject === 'Identity')?.A || 0,
+        values: radarChartData.find((item: any) => item.subject === 'Values')?.A || 0,
+        ethics: radarChartData.find((item: any) => item.subject === 'Ethics')?.A || 0,
       },
       flattenedSkiveValues: {
         skills: skillsVals,
@@ -590,6 +733,31 @@ const PrismAdminApp: FC = () => {
     };
   };
 
+  // Handler for complex SKIVE changes (skills/knowledge with nested structure)
+  const handleSkiveChange = (category: keyof SkiveRatings, subCategory: string, item: string, value: number) => {
+    setSkiveRatings(prev => ({
+      ...prev,
+      [category]: {
+        ...prev[category],
+        [subCategory]: {
+          ...(prev[category] as any)[subCategory],
+          [item]: value
+        }
+      }
+    }));
+  };
+
+  // Handler for simple SKIVE changes (identity/values/ethics with direct values)
+  const handleSimpleSkiveChange = (category: keyof SkiveRatings, subCategory: string, value: number) => {
+    setSkiveRatings(prev => ({
+      ...prev,
+      [category]: {
+        ...prev[category],
+        [subCategory]: value
+      }
+    }));
+  };
+
   const stage1Props = {
     professions, departments, roles,
     selectedProfession, setSelectedProfession,
@@ -598,9 +766,11 @@ const PrismAdminApp: FC = () => {
     profileName, setProfileName,
     dayToDay, setDayToDay,
     kras, setKras,
+    dayToDaySource, krasSource,
     skiveRatings, setSkiveRatings,
     competencyDescriptions,
-    handleSaveConfig, generateDayToDay, generateKras
+    handleSaveConfig, generateDayToDay, generateKras,
+    handleSkiveChange, handleSimpleSkiveChange, radarData
   };
 
   return (

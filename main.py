@@ -1025,12 +1025,12 @@ async def suggest_day_to_day(key: RoleKey, conn = Depends(get_db_connection)):
             except Exception:
                 items_raw = []
             items = _postprocess(items_raw, toks, 8, deterministic_items())
-            return {"items": items}
+            return {"items": items, "source": "ai"}
         except Exception as e:
             logging.warning("Gemini day_to_day failed, using deterministic: %s", e)
-            return {"items": deterministic_items()}
+            return {"items": deterministic_items(), "source": "default"}
     else:
-        return {"items": deterministic_items()}
+        return {"items": deterministic_items(), "source": "default"}
 
 @app.post("/api/ai/kras")
 async def suggest_kras(key: RoleKey, conn = Depends(get_db_connection)):
@@ -1087,12 +1087,12 @@ async def suggest_kras(key: RoleKey, conn = Depends(get_db_connection)):
             except Exception:
                 items_raw = []
             items = _postprocess(items_raw, toks, 8, deterministic_kras())
-            return {"items": items}
+            return {"items": items, "source": "ai"}
         except Exception as e:
             logging.warning("Gemini kras failed, using deterministic: %s", e)
-            return {"items": deterministic_kras()}
+            return {"items": deterministic_kras(), "source": "default"}
     else:
-        return {"items": deterministic_kras()}
+        return {"items": deterministic_kras(), "source": "default"}
 
 # --- Compatibility GET endpoints for suggestions used by the frontend ---
 @app.get("/api/suggestions/day_to_day/{role_id}")
