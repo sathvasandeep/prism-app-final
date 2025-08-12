@@ -373,13 +373,16 @@ const Stage1: FC<Stage1Props> = ({
             </button>
           </div>
 
-          <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700 flex justify-center">
-            <RadarChart cx={300} cy={150} outerRadius={100} width={600} height={300} data={radarData()}>
+          <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700">
+            <h3 className="text-lg font-semibold text-center mb-2">Overall SKIVE Radar</h3>
+            <div className="flex justify-center">
+              <RadarChart cx={300} cy={150} outerRadius={100} width={600} height={300} data={radarData()}>
               <PolarGrid />
               <PolarAngleAxis dataKey="subject" />
               <PolarRadiusAxis angle={30} domain={[0, 10]} />
               <Radar name="SKIVE" dataKey="A" stroke="#2563eb" fill="#2563eb" fillOpacity={0.4} />
-            </RadarChart>
+              </RadarChart>
+            </div>
           </div>
         </div>
       )}

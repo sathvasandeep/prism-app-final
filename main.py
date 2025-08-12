@@ -984,6 +984,68 @@ def _postprocess(items: List[str], toks: List[str], limit: int, fallback: List[s
                 break
     return cleaned[:limit]
 
+def _postprocess_kras(items: List[str], toks: List[str], limit: int, fallback: List[str]) -> List[str]:
+    """Relaxed filter for KRAs: allow items that are on-topic OR have metric/timeframe cues.
+    This avoids over-filtering valid KRAs that don't include digits but are still useful.
+    """
+    cleaned: List[str] = []
+    for it in items or []:
+        it = str(it).strip().strip('"')
+        if not it:
+            continue
+        s = it.lower()
+        on_topic = _on_topic(it, toks) if toks else True
+        has_metric = (
+            any(ch.isdigit() for ch in it)
+            or any(sym in s for sym in ["%", "≥", ">=", "<", "<=", "sla", "tat", "ratio", "hit", "nps", "loss", "accuracy"]) 
+            or any(term in s for term in ["week", "month", "quarter", "qoq", "yoy", "year", "days", "hours"]) 
+        )
+        if on_topic or has_metric:
+            cleaned.append(it)
+    if len(cleaned) < limit:
+        for it in fallback:
+            if it not in cleaned:
+                cleaned.append(it)
+            if len(cleaned) >= limit:
+                break
+    return cleaned[:limit]
+
+def _extract_items_json(text: str) -> List[str]:
+    """Best-effort extraction of items from Gemini output.
+    Accepts:
+      - Strict JSON: {"items": ["..."]}
+      - JSON inside markdown code fences
+      - Fallback: tries to locate a top-level {"items": [...]} block via regex
+    """
+    try:
+        if not text:
+            return []
+        s = text.strip()
+        # Strip markdown code fences if present
+        if s.startswith("```"):
+            # Remove first fence line
+            s = "\n".join(s.splitlines()[1:])
+            # Remove trailing fence if present
+            if s.strip().endswith("```"):
+                s = "\n".join(s.splitlines()[:-1])
+            s = s.strip()
+        # Direct JSON parse
+        try:
+            data = json.loads(s)
+            if isinstance(data, dict) and isinstance(data.get("items"), list):
+                return [str(x) for x in data.get("items", [])]
+        except Exception:
+            pass
+        # Regex search for {"items": [...]} block
+        m = re.search(r"\{\s*\"items\"\s*:\s*(\[.*?\])\s*\}", s, re.DOTALL)
+        if m:
+            arr = json.loads(m.group(1))
+            if isinstance(arr, list):
+                return [str(x) for x in arr]
+    except Exception:
+        return []
+    return []
+
 @app.post("/api/ai/day_to_day")
 async def suggest_day_to_day(key: RoleKey, conn = Depends(get_db_connection)):
     ctx = await _resolve_role_context(conn, key)
@@ -1010,25 +1072,42 @@ async def suggest_day_to_day(key: RoleKey, conn = Depends(get_db_connection)):
         return base
 
     if API_KEY and not DISABLE_AI:
-        try:
-            prompt = (
-                "Generate day-to-day tasks for the role below. Return STRICT JSON with key 'items' as an array of 8 strings.\n"
-                f"Profession: {profession}\nDepartment: {department}\nRole: {role}\n"
-            )
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            resp = await asyncio.to_thread(model.generate_content, prompt)
-            text = resp.text if hasattr(resp, "text") else str(resp)
-            # naive JSON extract
+        prompt = (
+            "You are an assistant generating the 10 MOST IMPORTANT day-to-day activities for the given role.  \n"
+            "These are the recurring, high-impact tasks that define success in the role and are typically part of performance evaluation.\n\n"
+            "Inputs\n"
+            f"Profession: {profession}\n"
+            f"Department: {department}\n"
+            f"Role: {role}\n\n"
+            "Output\n"
+            "Return STRICT JSON with a single top-level key \"items\" that is an array of exactly 10 strings.\n"
+            "Each string must:\n"
+            "    • Be a concrete, high-priority day-to-day activity the role actually performs\n"
+            "    • Include measurable elements (numbers, %, counts, hours, deadlines) so it is SMART\n"
+            "    • Stay strictly on-topic to the role and reflect real industry practices\n"
+            "    • Be clear, concise, and appraisal-ready\n\n"
+            "Formatting rules:\n"
+            "    • Return only JSON (no prose, no markdown, no code fences)\n"
+            "    • No extra keys, no nulls, no trailing commas\n"
+            "    • Each item is a single sentence (12–28 words)\n\n"
+            "Example role context (do not output this example): Chief Underwriter, Underwriting, Insurance"
+        )
+        # Simple one retry
+        for attempt in range(2):
             try:
-                data = json.loads(text)
-                items_raw = data.get("items", [])
-            except Exception:
-                items_raw = []
-            items = _postprocess(items_raw, toks, 8, deterministic_items())
-            return {"items": items, "source": "ai"}
-        except Exception as e:
-            logging.warning("Gemini day_to_day failed, using deterministic: %s", e)
-            return {"items": deterministic_items(), "source": "default"}
+                model = genai.GenerativeModel("gemini-1.5-flash")
+                resp = await asyncio.to_thread(model.generate_content, prompt)
+                text = resp.text if hasattr(resp, "text") else str(resp)
+                items_raw = _extract_items_json(text)
+                items = _postprocess(items_raw, toks, 10, deterministic_items())
+                return {"items": items, "source": "ai"}
+            except Exception as e:
+                if attempt == 0:
+                    logging.warning("Gemini day_to_day failed (will retry): %s", e)
+                    await asyncio.sleep(0.3)
+                    continue
+                logging.warning("Gemini day_to_day failed, using deterministic: %s", e)
+                return {"items": deterministic_items(), "source": "default"}
     else:
         return {"items": deterministic_items(), "source": "default"}
 
@@ -1072,25 +1151,42 @@ async def suggest_kras(key: RoleKey, conn = Depends(get_db_connection)):
         return base
 
     if API_KEY and not DISABLE_AI:
-        try:
-            prompt = (
-                "Generate SMART KRAs for the role below. Each KRA must include a measurable target and timeframe.\n"
-                f"Profession: {profession}\nDepartment: {department}\nRole: {role}\n"
-                "Return STRICT JSON with key 'items' as an array of 8 strings."
-            )
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            resp = await asyncio.to_thread(model.generate_content, prompt)
-            text = resp.text if hasattr(resp, "text") else str(resp)
+        prompt = (
+            "You are an assistant generating the 6–8 MOST IMPORTANT Key Result Areas (KRAs) for the given role.  \n"
+            "These KRAs should represent the critical outcomes that define success in the role and are used for performance evaluation.\n\n"
+            "Inputs\n"
+            f"Profession: {profession}\n"
+            f"Department: {department}\n"
+            f"Role: {role}\n\n"
+            "Output\n"
+            "Return STRICT JSON with a single top-level key \"items\" that is an array of 6–8 strings.\n"
+            "Each KRA must:\n"
+            "    • Be a critical, role-relevant outcome that impacts business performance\n"
+            "    • Include a measurable target (%, count, ratio, or time) so it is SMART\n"
+            "    • Define a clear scope (which process, portfolio, product, team, or region it applies to)\n"
+            "    • Include a timeframe (daily, monthly, quarterly, or annual)\n"
+            "    • Use realistic industry metrics and avoid vague, generic statements\n\n"
+            "Formatting rules:\n"
+            "    • Return only JSON (no prose, no markdown, no code fences)\n"
+            "    • No extra keys, no nulls, no trailing commas\n"
+            "    • Each item is a single sentence (14–30 words)\n\n"
+            "Example role context (do not output this example): Chief Underwriter, Underwriting, Insurance"
+        )
+        for attempt in range(2):
             try:
-                data = json.loads(text)
-                items_raw = data.get("items", [])
-            except Exception:
-                items_raw = []
-            items = _postprocess(items_raw, toks, 8, deterministic_kras())
-            return {"items": items, "source": "ai"}
-        except Exception as e:
-            logging.warning("Gemini kras failed, using deterministic: %s", e)
-            return {"items": deterministic_kras(), "source": "default"}
+                model = genai.GenerativeModel("gemini-1.5-flash")
+                resp = await asyncio.to_thread(model.generate_content, prompt)
+                text = resp.text if hasattr(resp, "text") else str(resp)
+                items_raw = _extract_items_json(text)
+                items = _postprocess_kras(items_raw, toks, 8, deterministic_kras())
+                return {"items": items, "source": "ai"}
+            except Exception as e:
+                if attempt == 0:
+                    logging.warning("Gemini kras failed (will retry): %s", e)
+                    await asyncio.sleep(0.3)
+                    continue
+                logging.warning("Gemini kras failed, using deterministic: %s", e)
+                return {"items": deterministic_kras(), "source": "default"}
     else:
         return {"items": deterministic_kras(), "source": "default"}
 
