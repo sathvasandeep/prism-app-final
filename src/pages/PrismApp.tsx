@@ -1,6 +1,7 @@
 // src/pages/PrismApp.tsx
 
-import React, { useEffect, useState, FC, MouseEvent, KeyboardEvent, ChangeEvent } from 'react';
+import React, { useState, useEffect } from 'react';
+import type { FC, MouseEvent, KeyboardEvent, ChangeEvent } from 'react';
 import { Save, Sparkles, ListChecks, ClipboardList, ChevronDown } from 'lucide-react';
 import { RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from 'recharts';
 
@@ -178,10 +179,18 @@ const EditableList: FC<EditableListProps> = ({ items, onChange, title, icon }) =
   );
 };
 
-const StagePlaceholder: FC<{ title: string }> = ({ title }) => (
+const StagePlaceholder: FC<{ title: string; getProfileData?: () => any }> = ({ title, getProfileData }) => (
   <div className="p-6">
     <h2 className="text-xl font-semibold">{title}</h2>
     <p className="text-gray-600 dark:text-gray-400 mt-2">Coming soon.</p>
+    {getProfileData && (
+      <div className="mt-4 p-4 bg-gray-100 dark:bg-gray-800 rounded-lg">
+        <h3 className="font-semibold mb-2">Available Data for Stage 3:</h3>
+        <pre className="text-xs overflow-auto max-h-40">
+          {JSON.stringify(getProfileData(), null, 2)}
+        </pre>
+      </div>
+    )}
   </div>
 );
 
@@ -217,8 +226,9 @@ const Stage1: FC<Stage1Props> = ({
   const radarData = () => {
     const avg = (vals: number[]) => (vals.length > 0 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0);
 
-    const skillsVals = Object.values(skiveRatings.skills).flatMap(sub => Object.values(sub).flatMap(item => Object.values(item as SkiveSubCategory)));
-    const knowledgeVals = Object.values(skiveRatings.knowledge).flatMap(sub => Object.values(sub).flatMap(item => Object.values(item as SkiveSubCategory)));
+    // Extract values correctly from nested SKIVE structure
+    const skillsVals = Object.values(skiveRatings.skills).flatMap(subcategory => Object.values(subcategory));
+    const knowledgeVals = Object.values(skiveRatings.knowledge).flatMap(subcategory => Object.values(subcategory));
     const identityVals = Object.values(skiveRatings.identity);
     const valuesVals = Object.values(skiveRatings.values);
     const ethicsVals = Object.values(skiveRatings.ethics);
@@ -231,6 +241,8 @@ const Stage1: FC<Stage1Props> = ({
       { subject: 'Ethics', A: avg(ethicsVals as number[]) },
     ];
   };
+
+
 
   return (
     <div className="p-4">
@@ -291,11 +303,14 @@ const Stage1: FC<Stage1Props> = ({
                 <AccordionItem key={mainCategory} label={mainCategory.charAt(0).toUpperCase() + mainCategory.slice(1)}>
                   <div className="p-4 space-y-2 bg-gray-50 dark:bg-gray-900">
                     {Object.entries(subCategories).map(([subCategory, items]) => {
-                      const isSimple = typeof Object.values(items)[0] !== 'object';
+                      // For skills/knowledge: subCategory is like 'cognitive', items is { analytical: 1, decisionMaking: 1, ... }
+                      // For identity/values/ethics: subCategory is like 'professionalRole', items is just the number 1
+                      const isSimple = typeof items === 'number';
+                      console.log(`Category: ${mainCategory}.${subCategory}, Items:`, items, 'Is simple:', isSimple);
                       if (isSimple) {
                         return (
                           <div key={subCategory} className="p-4 bg-white dark:bg-gray-800 rounded-md border border-gray-200 dark:border-gray-700">
-                            <p className="mb-2 text-sm text-gray-600 dark:text-gray-400">{competencyDescriptions[subCategory] || 'No description available.'}</p>
+                            <h4 className="mb-2 text-sm font-medium text-gray-700 dark:text-gray-300 capitalize">{subCategory.replace(/([A-Z])/g, ' $1')}</h4>
                             <RangeWithTicks value={items as unknown as number} onChange={(newValue) => handleSimpleSkiveChange(mainCategory as keyof SkiveRatings, subCategory, newValue)} />
                           </div>
                         );
@@ -303,7 +318,7 @@ const Stage1: FC<Stage1Props> = ({
                       return (
                         <AccordionItem key={subCategory} label={subCategory.charAt(0).toUpperCase() + subCategory.slice(1)} defaultOpen={false}>
                           <div className="p-4 space-y-3 bg-gray-100 dark:bg-gray-800">
-                            {Object.entries(items).map(([item, value]) => (
+                            {Object.entries(items as Record<string, number>).map(([item, value]) => (
                               <div key={item}>
                                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 capitalize">{item.replace(/([A-Z])/g, ' $1')}</label>
                                 <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">{competencyDescriptions[item] || 'No description available.'}</p>
@@ -320,6 +335,17 @@ const Stage1: FC<Stage1Props> = ({
             </div>
           </div>
 
+          {/* Submit Button */}
+          <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700 flex justify-center">
+            <button
+              onClick={handleSaveConfig}
+              className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors duration-200 flex items-center gap-2"
+            >
+              <Save className="w-5 h-5" />
+              Save Profile
+            </button>
+          </div>
+
           <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700 flex justify-center">
             <RadarChart cx={300} cy={150} outerRadius={100} width={600} height={300} data={radarData()}>
               <PolarGrid />
@@ -329,7 +355,7 @@ const Stage1: FC<Stage1Props> = ({
             </RadarChart>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };
@@ -459,9 +485,9 @@ const PrismAdminApp: FC = () => {
     }
     try {
       const payload = {
-        profession_id: selectedProfession ? parseInt(selectedProfession, 10) : null,
-        department_id: selectedDept ? parseInt(selectedDept, 10) : null,
-        role_id: parseInt(selectedRole, 10),
+        profession: selectedProfession ? parseInt(selectedProfession, 10) : null,
+        department: selectedDept ? parseInt(selectedDept, 10) : null,
+        role: parseInt(selectedRole, 10),
         name: profileName,
         skive: skiveRatings,
         day_to_day: dayToDay,
@@ -473,15 +499,22 @@ const PrismAdminApp: FC = () => {
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.detail || `Save failed: ${res.statusText}`);
+        const errorText = await res.text();
+        let errorMessage = `Save failed: ${res.statusText}`;
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.detail || errorData.message || errorMessage;
+        } catch {
+          errorMessage = errorText || errorMessage;
+        }
+        throw new Error(errorMessage);
       }
       const result = await res.json();
       console.log('✅ Config saved successfully:', result);
-      alert(`Profile saved successfully! Profile ID: ${result.profile_id}`);
+      alert(`✅ Profile saved successfully! Profile ID: ${result.profile_id}`);
     } catch (err: any) {
       console.error('❌ Error saving config:', err);
-      alert(`Error saving config: ${err.message}`);
+      alert(`❌ Error saving profile: ${err.message}`);
     }
   };
 
@@ -507,6 +540,56 @@ const PrismAdminApp: FC = () => {
     }
   };
 
+  // Helper functions for Stage 3 data access
+  const getSkiveDataForStage3 = () => {
+    const avg = (vals: number[]) => (vals.length > 0 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0);
+    
+    const skillsVals = Object.values(skiveRatings.skills).flatMap(subcategory => Object.values(subcategory));
+    const knowledgeVals = Object.values(skiveRatings.knowledge).flatMap(subcategory => Object.values(subcategory));
+    const identityVals = Object.values(skiveRatings.identity);
+    const valuesVals = Object.values(skiveRatings.values);
+    const ethicsVals = Object.values(skiveRatings.ethics);
+
+    const radarChartData = [
+      { subject: 'Skills', A: avg(skillsVals as number[]) },
+      { subject: 'Knowledge', A: avg(knowledgeVals as number[]) },
+      { subject: 'Identity', A: avg(identityVals as number[]) },
+      { subject: 'Values', A: avg(valuesVals as number[]) },
+      { subject: 'Ethics', A: avg(ethicsVals as number[]) },
+    ];
+
+    return {
+      rawSkiveRatings: skiveRatings,
+      radarChartData,
+      categoryAverages: {
+        skills: radarChartData.find(item => item.subject === 'Skills')?.A || 0,
+        knowledge: radarChartData.find(item => item.subject === 'Knowledge')?.A || 0,
+        identity: radarChartData.find(item => item.subject === 'Identity')?.A || 0,
+        values: radarChartData.find(item => item.subject === 'Values')?.A || 0,
+        ethics: radarChartData.find(item => item.subject === 'Ethics')?.A || 0,
+      },
+      flattenedSkiveValues: {
+        skills: skillsVals,
+        knowledge: knowledgeVals,
+        identity: identityVals,
+        values: valuesVals,
+        ethics: ethicsVals,
+      }
+    };
+  };
+
+  const getProfileDataForStage3 = () => {
+    return {
+      profileName,
+      profession: selectedProfession,
+      department: selectedDept,
+      role: selectedRole,
+      dayToDay,
+      kras,
+      skiveData: getSkiveDataForStage3(),
+    };
+  };
+
   const stage1Props = {
     professions, departments, roles,
     selectedProfession, setSelectedProfession,
@@ -526,7 +609,7 @@ const PrismAdminApp: FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
           {/* Sidebar */}
           <aside className="md:col-span-3 lg:col-span-3">
-            {/* ... rest of the code remains the same ... */}
+            <div className="bg-white border rounded-lg">
               <div className="px-4 py-3 border-b">
                 <h2 className="text-lg font-semibold">PRISM Admin</h2>
                 <p className="text-sm text-gray-600">Configure roles and simulations</p>
@@ -559,7 +642,7 @@ const PrismAdminApp: FC = () => {
             <div className="bg-white border rounded-lg p-4 md:p-6 relative z-10">
               {stage === 'stage1' && <Stage1 {...stage1Props} />}
               {stage === 'stage2' && <StagePlaceholder title="Stage 2: ALE Designer" />}
-              {stage === 'stage3' && <StagePlaceholder title="Stage 3: Task Factory" />}
+              {stage === 'stage3' && <StagePlaceholder title="Stage 3: Task Factory" getProfileData={getProfileDataForStage3} />}
             </div>
           </main>
         </div>

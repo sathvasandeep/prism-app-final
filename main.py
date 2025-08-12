@@ -64,10 +64,12 @@ origins = [
     "http://localhost:8080", 
     "http://localhost:5173",
     "http://localhost:5174",
+    "http://localhost:5179",
     "http://127.0.0.1",
     "http://127.0.0.1:8080",
     "http://127.0.0.1:5173",
-    "http://127.0.0.1:5174"
+    "http://127.0.0.1:5174",
+    "http://127.0.0.1:5179"
 ]
 
 app.add_middleware(
@@ -561,6 +563,71 @@ async def get_roles(department_id: Optional[str] = None, conn = Depends(get_db_c
         logging.error(f"Error fetching roles: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch roles")
 
+# --- SIMULATIONS (Dashboard) ---
+@app.get("/api/simulations")
+async def list_simulations(conn = Depends(get_db_connection)):
+    """Return a simple list of saved profiles for the dashboard.
+    Uses `role_profiles` joined to get readable names. `updated_at` and `archetype`
+    may be NULL depending on schema; the frontend tolerates missing values.
+    """
+    cursor = await conn.cursor(aiomysql.DictCursor)
+    try:
+        await cursor.execute(
+            """
+            SELECT
+                rp.id,
+                r.name AS specific_role,
+                p.name AS profession,
+                d.name AS department,
+                NULL AS updated_at,
+                NULL AS archetype
+            FROM role_profiles rp
+            LEFT JOIN roles r ON rp.role_id = r.id
+            LEFT JOIN departments d ON rp.department_id = d.id
+            LEFT JOIN professions p ON rp.profession_id = p.id
+            ORDER BY rp.id DESC
+            """
+        )
+        rows = await cursor.fetchall()
+        return rows
+    finally:
+        await cursor.close()
+
+@app.get("/api/simulations/{profile_id}")
+async def get_simulation(profile_id: int, conn = Depends(get_db_connection)):
+    """Return a saved profile payload by id. This is intentionally lightweight and
+    returns the main identity columns plus names for display. The UI merges this
+    with its initial template.
+    """
+    cursor = await conn.cursor(aiomysql.DictCursor)
+    try:
+        await cursor.execute(
+            """
+            SELECT
+                rp.id,
+                rp.profile_name,
+                rp.profession_id,
+                rp.department_id,
+                rp.role_id,
+                p.name AS profession,
+                d.name AS department,
+                r.name AS specific_role,
+                rp.created_at
+            FROM role_profiles rp
+            LEFT JOIN roles r ON rp.role_id = r.id
+            LEFT JOIN departments d ON rp.department_id = d.id
+            LEFT JOIN professions p ON rp.profession_id = p.id
+            WHERE rp.id = %s
+            """,
+            (profile_id,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Profile not found")
+        return row
+    finally:
+        await cursor.close()
+
 # --- CONFIG SAVE (Stage 1) ---
 from pydantic import Field
 
@@ -1026,6 +1093,170 @@ async def suggest_kras(key: RoleKey, conn = Depends(get_db_connection)):
             return {"items": deterministic_kras()}
     else:
         return {"items": deterministic_kras()}
+
+# --- Compatibility GET endpoints for suggestions used by the frontend ---
+@app.get("/api/suggestions/day_to_day/{role_id}")
+async def get_day_to_day_suggestions(role_id: int, conn = Depends(get_db_connection)):
+    """Compatibility wrapper: generate day-to-day suggestions by role id using Gemini AI.
+    Uses the same AI logic as /api/ai/day_to_day but with role_id parameter.
+    """
+    try:
+        # Get role context from database
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute("""
+                SELECT r.title as role, d.name as department, p.name as profession
+                FROM roles r
+                JOIN departments d ON r.department_id = d.id
+                JOIN professions p ON d.profession_id = p.id
+                WHERE r.id = %s
+            """, (role_id,))
+            result = await cur.fetchone()
+            
+        if not result:
+            raise ValueError(f"Role {role_id} not found")
+            
+        profession = result.get("profession", "")
+        department = result.get("department", "")
+        role = result.get("role", "")
+        toks = _tokens(profession, department, role)
+
+        def deterministic_items() -> List[str]:
+            r = role.lower(); d = department.lower()
+            base = [
+                f"Review priority queue and plan work for the day",
+                f"Update metrics and share key insights with {d} team",
+                f"Collaborate with stakeholders to unblock issues",
+                f"Perform peer review/QA on team outputs",
+                f"Document process updates and SOP changes in the team wiki",
+                f"Attend stand-up and provide status, risks, and next actions",
+                f"Respond to customer/internal queries within SLA",
+                f"Identify 1 improvement opportunity and log it to backlog",
+            ]
+            if "underwrit" in r:
+                base[0] = "Review new submissions and prioritize high-value risks before noon"
+                base[2] = "Coordinate with brokers and actuarial on pricing/wordings"
+            if "claims" in d:
+                base[3] = "Perform QA on 5 claim files; ensure documentation completeness"
+            return base
+
+        # Use Gemini AI if available, otherwise fallback to deterministic
+        if API_KEY and not DISABLE_AI:
+            try:
+                prompt = (
+                    "Generate day-to-day tasks for the role below. Return STRICT JSON with key 'items' as an array of 8 strings.\n"
+                    f"Profession: {profession}\nDepartment: {department}\nRole: {role}\n"
+                )
+                model = genai.GenerativeModel("gemini-1.5-flash")
+                resp = await asyncio.to_thread(model.generate_content, prompt)
+                text = resp.text if hasattr(resp, "text") else str(resp)
+                # naive JSON extract
+                try:
+                    data = json.loads(text)
+                    items_raw = data.get("items", [])
+                except Exception:
+                    items_raw = []
+                items = _postprocess(items_raw, toks, 8, deterministic_items())
+                return {"suggestions": items}
+            except Exception as e:
+                logging.warning("Gemini day_to_day failed, using deterministic: %s", e)
+                return {"suggestions": deterministic_items()}
+        else:
+            return {"suggestions": deterministic_items()}
+    except Exception as e:
+        logging.warning(f"/api/suggestions/day_to_day/{role_id} failed, using generic defaults: {e}")
+        generic = [
+            "Review priority queue and plan work for the day",
+            "Update metrics and share key insights",
+            "Collaborate with stakeholders to unblock issues",
+            "Perform peer review/QA on team outputs",
+            "Document important changes in the wiki",
+            "Attend stand-up and align on next actions",
+            "Respond to pending queries within SLA",
+            "Identify one improvement and add to backlog",
+        ]
+        return {"suggestions": generic}
+
+@app.get("/api/suggestions/kras/{role_id}")
+async def get_kras_suggestions(role_id: int, conn = Depends(get_db_connection)):
+    """Compatibility wrapper: generate KRA suggestions by role id using Gemini AI.
+    Uses the same AI logic as /api/ai/kras but with role_id parameter.
+    """
+    try:
+        # Get role context from database
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute("""
+                SELECT r.title as role, d.name as department, p.name as profession
+                FROM roles r
+                JOIN departments d ON r.department_id = d.id
+                JOIN professions p ON d.profession_id = p.id
+                WHERE r.id = %s
+            """, (role_id,))
+            result = await cur.fetchone()
+            
+        if not result:
+            raise ValueError(f"Role {role_id} not found")
+            
+        profession = result.get("profession", "")
+        department = result.get("department", "")
+        role = result.get("role", "")
+        toks = _tokens(profession, department, role)
+
+        def deterministic_kras() -> List[str]:
+            r = role.lower(); d = department.lower()
+            base = [
+                f"Achieve ≥ 95% SLA adherence for key {r} processes by Q4",
+                f"Reduce defect rate in {r} outputs to < 2% by end of quarter",
+                f"Improve data accuracy for {r} reports to ≥ 99.5% each month",
+                f"Deliver 2 process improvements per quarter, saving ≥ 5% effort",
+                f"Maintain stakeholder NPS ≥ 8.5/10 across {d} counterparts",
+                f"Identify and mitigate top 3 operational risks quarterly",
+                f"Coach team: 1 enablement session/month; lift junior throughput by 10%",
+                f"Publish monthly KPI review with 3 corrective actions and owners",
+                "Lift broker satisfaction to ≥ 8.5/10 via quarterly feedback",
+            ]
+            if "sales" in d or "business development" in d:
+                base[0] = "Increase qualified pipeline by 25% QoQ; maintain win-rate ≥ 20%"
+                base[3] = "Launch 1 new outreach playbook/quarter; lift conversion by 10%"
+            if "fraud" in r:
+                base[5] = "Deploy 2 new anomaly-detection rules; lower false negatives by 10%"
+            return base
+
+        # Use Gemini AI if available, otherwise fallback to deterministic
+        if API_KEY and not DISABLE_AI:
+            try:
+                prompt = (
+                    "Generate KRAs (Key Result Areas) for the role below. Return STRICT JSON with key 'items' as an array of 8 strings.\n"
+                    f"Profession: {profession}\nDepartment: {department}\nRole: {role}\n"
+                )
+                model = genai.GenerativeModel("gemini-1.5-flash")
+                resp = await asyncio.to_thread(model.generate_content, prompt)
+                text = resp.text if hasattr(resp, "text") else str(resp)
+                # naive JSON extract
+                try:
+                    data = json.loads(text)
+                    items_raw = data.get("items", [])
+                except Exception:
+                    items_raw = []
+                items = _postprocess(items_raw, toks, 8, deterministic_kras())
+                return {"suggestions": items}
+            except Exception as e:
+                logging.warning("Gemini KRAs failed, using deterministic: %s", e)
+                return {"suggestions": deterministic_kras()}
+        else:
+            return {"suggestions": deterministic_kras()}
+    except Exception as e:
+        logging.warning(f"/api/suggestions/kras/{role_id} failed, using generic defaults: {e}")
+        generic = [
+            "Achieve 95% SLA adherence for key processes by Q4",
+            "Reduce defect rate in outputs to < 2% by end of quarter",
+            "Improve data accuracy for reports to ≥ 99.5% each month",
+            "Deliver 2 process improvements per quarter, saving ≥ 5% effort",
+            "Maintain stakeholder NPS ≥ 8.5/10 across counterparts",
+            "Identify and mitigate top 3 operational risks quarterly",
+            "Coach team: 1 enablement session/month; lift junior throughput by 10%",
+            "Publish monthly KPI review with 3 corrective actions and owners",
+        ]
+        return {"suggestions": generic}
 
 @app.get("/api/profile/multi-radar/{profile_id}")
 async def get_multi_radar_data(profile_id: int, conn = Depends(get_db_connection)):
