@@ -4,6 +4,8 @@ import React, { useState, useEffect } from 'react';
 import type { FC, MouseEvent, KeyboardEvent, ChangeEvent } from 'react';
 import { Save, Sparkles, ListChecks, ClipboardList, ChevronDown } from 'lucide-react';
 import { RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from 'recharts';
+import Stage2 from './stages/Stage2';
+import { useProfessions, useDepartments, useRoles } from '../api/client';
 
 // --- TYPE DEFINITIONS ---
 type Stage = 'stage1' | 'stage2' | 'stage3';
@@ -47,6 +49,15 @@ interface EditableListProps {
   icon: React.ReactNode;
 }
 
+// --- STAGE 2 TYPES ---
+interface ObjectiveLevels {
+  basic: string;
+  intermediate: string;
+  advanced: string;
+}
+type ObjectiveSource = 'none' | 'ai' | 'default';
+type ObjectivesMap = Record<string, ObjectiveLevels & { source: ObjectiveSource }>; // key: path like skills.cognitive.analytical
+
 interface Stage1Props {
   professions: SelectOption[];
   departments: SelectOption[];
@@ -66,7 +77,7 @@ interface Stage1Props {
   dayToDaySource: 'default' | 'ai' | 'none';
   krasSource: 'default' | 'ai' | 'none';
   skiveRatings: SkiveRatings;
-  setSkiveRatings: (value: SkiveRatings) => void;
+  setSkiveRatings: (value: SkiveRatings | ((prev: SkiveRatings) => SkiveRatings)) => void;
   competencyDescriptions: Record<string, string>;
   handleSaveConfig: () => void;
   generateDayToDay: () => void;
@@ -81,6 +92,8 @@ const AccordionItem: FC<AccordionItemProps> = ({ label, children, defaultOpen = 
   const handleToggle = () => {
     setIsOpen(prev => !prev);
   };
+
+// (Stage2 extracted into separate component)
 
   return (
     <div className="border rounded-md overflow-hidden">
@@ -394,17 +407,19 @@ const Stage1: FC<Stage1Props> = ({
 
 const PrismAdminApp: FC = () => {
   const [stage, setStage] = useState<Stage>('stage1');
-  const [professions, setProfessions] = useState<SelectOption[]>([]);
-  const [departments, setDepartments] = useState<SelectOption[]>([]);
-  const [roles, setRoles] = useState<SelectOption[]>([]);
   const [selectedProfession, setSelectedProfession] = useState<string>('');
   const [selectedDept, setSelectedDept] = useState<string>('');
   const [selectedRole, setSelectedRole] = useState<string>('');
+  const { data: professionsData = [] } = useProfessions();
+  const { data: departmentsData = [] } = useDepartments(selectedProfession || undefined);
+  const { data: rolesData = [] } = useRoles(selectedDept || undefined);
   const [profileName, setProfileName] = useState<string>('');
   const [dayToDay, setDayToDay] = useState<string[]>([]);
   const [kras, setKras] = useState<string[]>([]);
   const [dayToDaySource, setDayToDaySource] = useState<'default' | 'ai' | 'none'>('none');
   const [krasSource, setKrasSource] = useState<'default' | 'ai' | 'none'>('none');
+  // Stage 2 state: objectives per sub-competency
+  const [objectives, setObjectives] = useState<ObjectivesMap>({});
   const [skiveRatings, setSkiveRatings] = useState<SkiveRatings>({
     skills: {
       cognitive: { analytical: 1, decisionMaking: 1, strategicPlanning: 1, criticalEvaluation: 1 },
@@ -457,58 +472,9 @@ const PrismAdminApp: FC = () => {
     "ethics.virtue": "Character traits like integrity, responsibility, and honesty",
   };
 
-  useEffect(() => {
-    const fetchProfessions = async () => {
-      try {
-        const res = await fetch('/api/professions');
-        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-        const data = await res.json();
-        setProfessions(data);
-      } catch (err) {
-        console.error('❌ Error loading professions:', err);
-        setProfessions([]);
-      }
-    };
-    fetchProfessions();
-  }, []);
-
-  useEffect(() => {
-    setDepartments([]);
-    setSelectedDept('');
-    if (selectedProfession) {
-      const fetchDepartments = async () => {
-        try {
-          const res = await fetch(`/api/departments?profession_id=${selectedProfession}`);
-          if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-          const data = await res.json();
-          setDepartments(data);
-        } catch (err) {
-          console.error('❌ Error loading departments:', err);
-          setDepartments([]);
-        }
-      };
-      fetchDepartments();
-    }
-  }, [selectedProfession]);
-
-  useEffect(() => {
-    setRoles([]);
-    setSelectedRole('');
-    if (selectedDept) {
-      const fetchRoles = async () => {
-        try {
-          const res = await fetch(`/api/roles?department_id=${selectedDept}`);
-          if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-          const data = await res.json();
-          setRoles(data);
-        } catch (err) {
-          console.error('❌ Error loading roles:', err);
-          setRoles([]);
-        }
-      };
-      fetchRoles();
-    }
-  }, [selectedDept]);
+  // Reset dependent selections when parent changes
+  useEffect(() => { setSelectedDept(''); }, [selectedProfession]);
+  useEffect(() => { setSelectedRole(''); }, [selectedDept]);
 
   const handleSaveConfig = async () => {
     if (!selectedRole || !profileName.trim()) {
@@ -524,6 +490,7 @@ const PrismAdminApp: FC = () => {
         skive: skiveRatings,
         day_to_day: dayToDay,
         kras: kras,
+        objectives,
       };
       const res = await fetch('/api/config/save', {
         method: 'POST',
@@ -761,6 +728,9 @@ const PrismAdminApp: FC = () => {
     }));
   };
 
+  const professions = professionsData;
+  const departments = departmentsData;
+  const roles = rolesData;
   const stage1Props = {
     professions, departments, roles,
     selectedProfession, setSelectedProfession,
@@ -798,7 +768,7 @@ const PrismAdminApp: FC = () => {
                   onClick={() => setStage('stage2')}
                   className={`w-full text-left px-3 py-2 rounded mb-1 ${stage === 'stage2' ? 'bg-blue-600 text-white' : 'hover:bg-gray-100'}`}
                 >
-                  Stage 2 • ALE Designer
+                  Stage 2 • Simulation Objectives
                 </button>
                 <button
                   onClick={() => setStage('stage3')}
@@ -814,7 +784,16 @@ const PrismAdminApp: FC = () => {
           <main className="md:col-span-9 lg:col-span-9">
             <div className="bg-white border rounded-lg p-4 md:p-6 relative z-10">
               {stage === 'stage1' && <Stage1 {...stage1Props} />}
-              {stage === 'stage2' && <StagePlaceholder title="Stage 2: ALE Designer" />}
+              {stage === 'stage2' && (
+                <Stage2
+                  objectives={objectives}
+                  setObjectives={setObjectives}
+                  skiveRatings={skiveRatings}
+                  selectedProfession={selectedProfession}
+                  selectedDept={selectedDept}
+                  selectedRole={selectedRole}
+                />
+              )}
               {stage === 'stage3' && <StagePlaceholder title="Stage 3: Task Factory" getProfileData={getProfileDataForStage3} />}
             </div>
           </main>

@@ -14,6 +14,8 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from routes import meta_async
+from routes import ai_async
 
 # Load environment variables
 load_dotenv()
@@ -79,6 +81,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"]
 )
+
+# Include modular routers
+app.include_router(meta_async.router, prefix="/api")
+app.include_router(ai_async.router, prefix="/api/ai")
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok"}
 
 @app.on_event("startup")
 async def on_startup():
@@ -505,63 +515,13 @@ async def debug_skive_rows(profile_id: int, conn = Depends(get_db_connection)):
     except Exception as e:
         return {"error": str(e)}
 
-@app.get("/api/professions")
-async def get_professions(conn = Depends(get_db_connection)):
-    """List available professions"""
-    try:
-        cursor = await conn.cursor(aiomysql.DictCursor)
-        await cursor.execute("SELECT id, name FROM professions ORDER BY id")
-        rows = await cursor.fetchall()
-        await cursor.close()
-        return rows
-    except Exception as e:
-        logging.error(f"Error fetching professions: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch professions")
+# moved: /api/professions is handled in routes/meta_async.py
 
-@app.get("/api/departments")
-async def get_departments(profession_id: Optional[str] = None, conn = Depends(get_db_connection)):
-    """List departments by profession"""
-    try:
-        # Gracefully handle missing/invalid ids
-        if not profession_id:
-            return []
-        try:
-            prof_id_int = int(profession_id)
-        except Exception:
-            return []
-        cursor = await conn.cursor(aiomysql.DictCursor)
-        await cursor.execute(
-            "SELECT id, name, profession_id FROM departments WHERE profession_id = %s ORDER BY id",
-            (prof_id_int,)
-        )
-        rows = await cursor.fetchall()
-        await cursor.close()
-        return rows
-    except Exception as e:
-        logging.error(f"Error fetching departments: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch departments")
+# moved: /api/departments is handled in routes/meta_async.py
+# AI objective helpers moved to routes/ai_async.py
+# moved: /api/ai/objectives is handled in routes/ai_async.py
 
-@app.get("/api/roles")
-async def get_roles(department_id: Optional[str] = None, conn = Depends(get_db_connection)):
-    """List roles by department"""
-    try:
-        if not department_id:
-            return []
-        try:
-            dept_id_int = int(department_id)
-        except Exception:
-            return []
-        cursor = await conn.cursor(aiomysql.DictCursor)
-        await cursor.execute(
-            "SELECT id, name, department_id FROM roles WHERE department_id = %s ORDER BY id",
-            (dept_id_int,)
-        )
-        rows = await cursor.fetchall()
-        await cursor.close()
-        return rows
-    except Exception as e:
-        logging.error(f"Error fetching roles: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch roles")
+# moved: /api/roles is handled in routes/meta_async.py
 
 # --- SIMULATIONS (Dashboard) ---
 @app.get("/api/simulations")
@@ -934,9 +894,22 @@ async def generate_objective(req: GenerateObjectiveRequest, conn = Depends(get_d
 
 # --- AI SUGGESTIONS: Day-to-Day and KRAs ---
 class RoleKey(BaseModel):
-    profession: Optional[int]
-    department: Optional[int]
-    role: Optional[int]
+    profession: Optional[int] = None
+    department: Optional[int] = None
+    role: Optional[int] = None
+
+class ObjectiveRequest(BaseModel):
+    key: RoleKey
+    path: str  # e.g., "skills.cognitive.analytical" or "knowledge.procedural.methods"
+
+class ObjectiveLevels(BaseModel):
+    basic: str
+    intermediate: str
+    advanced: str
+
+class ObjectiveResponse(BaseModel):
+    levels: ObjectiveLevels
+    source: str
 
 async def _resolve_role_context(conn, key: RoleKey) -> Dict[str, str]:
     ctx = {"profession": "", "department": "", "role": ""}
@@ -1045,150 +1018,6 @@ def _extract_items_json(text: str) -> List[str]:
     except Exception:
         return []
     return []
-
-@app.post("/api/ai/day_to_day")
-async def suggest_day_to_day(key: RoleKey, conn = Depends(get_db_connection)):
-    ctx = await _resolve_role_context(conn, key)
-    profession = ctx.get("profession", ""); department = ctx.get("department", ""); role = ctx.get("role", "")
-    toks = _tokens(profession, department, role)
-
-    def deterministic_items() -> List[str]:
-        r = role.lower(); d = department.lower()
-        base = [
-            f"Review {r} queue and triage high-priority items by 10 AM",
-            f"Prepare and analyze {r} metrics dashboard; share insights weekly",
-            f"Coordinate with {d} stakeholders to clarify requirements and blockers",
-            f"Perform peer review/QA on 2 {r} outputs daily",
-            f"Document process updates and SOP changes in the team wiki",
-            f"Attend stand-up and provide status, risks, and next actions",
-            f"Respond to customer/internal queries within SLA",
-            f"Identify 1 improvement opportunity and log it to backlog",
-        ]
-        if "underwrit" in r:
-            base[0] = "Review new submissions and prioritize high-value risks before noon"
-            base[2] = "Coordinate with brokers and actuarial on pricing/wordings"
-        if "claims" in d:
-            base[3] = "Perform QA on 5 claim files; ensure documentation completeness"
-        return base
-
-    if API_KEY and not DISABLE_AI:
-        prompt = (
-            "You are an assistant generating the 10 MOST IMPORTANT day-to-day activities for the given role.  \n"
-            "These are the recurring, high-impact tasks that define success in the role and are typically part of performance evaluation.\n\n"
-            "Inputs\n"
-            f"Profession: {profession}\n"
-            f"Department: {department}\n"
-            f"Role: {role}\n\n"
-            "Output\n"
-            "Return STRICT JSON with a single top-level key \"items\" that is an array of exactly 10 strings.\n"
-            "Each string must:\n"
-            "    • Be a concrete, high-priority day-to-day activity the role actually performs\n"
-            "    • Include measurable elements (numbers, %, counts, hours, deadlines) so it is SMART\n"
-            "    • Stay strictly on-topic to the role and reflect real industry practices\n"
-            "    • Be clear, concise, and appraisal-ready\n\n"
-            "Formatting rules:\n"
-            "    • Return only JSON (no prose, no markdown, no code fences)\n"
-            "    • No extra keys, no nulls, no trailing commas\n"
-            "    • Each item is a single sentence (12–28 words)\n\n"
-            "Example role context (do not output this example): Chief Underwriter, Underwriting, Insurance"
-        )
-        # Simple one retry
-        for attempt in range(2):
-            try:
-                model = genai.GenerativeModel("gemini-1.5-flash")
-                resp = await asyncio.to_thread(model.generate_content, prompt)
-                text = resp.text if hasattr(resp, "text") else str(resp)
-                items_raw = _extract_items_json(text)
-                items = _postprocess(items_raw, toks, 10, deterministic_items())
-                return {"items": items, "source": "ai"}
-            except Exception as e:
-                if attempt == 0:
-                    logging.warning("Gemini day_to_day failed (will retry): %s", e)
-                    await asyncio.sleep(0.3)
-                    continue
-                logging.warning("Gemini day_to_day failed, using deterministic: %s", e)
-                return {"items": deterministic_items(), "source": "default"}
-    else:
-        return {"items": deterministic_items(), "source": "default"}
-
-@app.post("/api/ai/kras")
-async def suggest_kras(key: RoleKey, conn = Depends(get_db_connection)):
-    ctx = await _resolve_role_context(conn, key)
-    profession = ctx.get("profession", ""); department = ctx.get("department", ""); role = ctx.get("role", "")
-    toks = _tokens(profession, department, role)
-
-    def deterministic_kras() -> List[str]:
-        r = role.lower(); d = department.lower()
-        base = [
-            f"Achieve ≥ 95% SLA adherence for key {r} processes by Q4",
-            f"Reduce defect rate in {r} outputs to < 2% by end of quarter",
-            f"Improve data accuracy for {r} reports to ≥ 99.5% each month",
-            f"Deliver 2 process improvements per quarter, saving ≥ 5% effort",
-            f"Maintain stakeholder NPS ≥ 8.5/10 across {d} counterparts",
-            f"Identify and mitigate top 3 operational risks quarterly",
-            f"Coach team: 1 enablement session/month; lift junior throughput by 10%",
-            f"Publish monthly KPI review with 3 corrective actions and owners",
-        ]
-        if "claims" in d or "adjudication" in d:
-            base[0] = "Process ≥ 95% of claims within SLA; keep average TAT under 48 hours"
-            base[1] = "Reduce claim reopens to < 1.5% by implementing QA feedback loops"
-        if "underwrit" in r:
-            base = [
-                "Maintain portfolio loss ratio ≤ 65% for the fiscal year",
-                "Grow bound premium by 15% YoY while adhering to risk appetite",
-                "Achieve ≥ 95% underwriting file completeness and audit readiness",
-                "Reduce referral turnaround time to < 24 hours for 90% of cases",
-                "Increase hit ratio to ≥ 25% while sustaining target pricing adequacy",
-                "Implement 2 guideline improvements/quarter based on loss analysis",
-                "Achieve ≥ 98% policy wording accuracy across bound policies",
-                "Lift broker satisfaction to ≥ 8.5/10 via quarterly feedback",
-            ]
-        if "sales" in d or "business development" in d:
-            base[0] = "Increase qualified pipeline by 25% QoQ; maintain win-rate ≥ 20%"
-            base[3] = "Launch 1 new outreach playbook/quarter; lift conversion by 10%"
-        if "fraud" in r:
-            base[5] = "Reduce confirmed fraud loss by 30% YoY through targeted investigations"
-        return base
-
-    if API_KEY and not DISABLE_AI:
-        prompt = (
-            "You are an assistant generating the 6–8 MOST IMPORTANT Key Result Areas (KRAs) for the given role.  \n"
-            "These KRAs should represent the critical outcomes that define success in the role and are used for performance evaluation.\n\n"
-            "Inputs\n"
-            f"Profession: {profession}\n"
-            f"Department: {department}\n"
-            f"Role: {role}\n\n"
-            "Output\n"
-            "Return STRICT JSON with a single top-level key \"items\" that is an array of 6–8 strings.\n"
-            "Each KRA must:\n"
-            "    • Be a critical, role-relevant outcome that impacts business performance\n"
-            "    • Include a measurable target (%, count, ratio, or time) so it is SMART\n"
-            "    • Define a clear scope (which process, portfolio, product, team, or region it applies to)\n"
-            "    • Include a timeframe (daily, monthly, quarterly, or annual)\n"
-            "    • Use realistic industry metrics and avoid vague, generic statements\n\n"
-            "Formatting rules:\n"
-            "    • Return only JSON (no prose, no markdown, no code fences)\n"
-            "    • No extra keys, no nulls, no trailing commas\n"
-            "    • Each item is a single sentence (14–30 words)\n\n"
-            "Example role context (do not output this example): Chief Underwriter, Underwriting, Insurance"
-        )
-        for attempt in range(2):
-            try:
-                model = genai.GenerativeModel("gemini-1.5-flash")
-                resp = await asyncio.to_thread(model.generate_content, prompt)
-                text = resp.text if hasattr(resp, "text") else str(resp)
-                items_raw = _extract_items_json(text)
-                items = _postprocess_kras(items_raw, toks, 8, deterministic_kras())
-                return {"items": items, "source": "ai"}
-            except Exception as e:
-                if attempt == 0:
-                    logging.warning("Gemini kras failed (will retry): %s", e)
-                    await asyncio.sleep(0.3)
-                    continue
-                logging.warning("Gemini kras failed, using deterministic: %s", e)
-                return {"items": deterministic_kras(), "source": "default"}
-    else:
-        return {"items": deterministic_kras(), "source": "default"}
 
 # --- Compatibility GET endpoints for suggestions used by the frontend ---
 @app.get("/api/suggestions/day_to_day/{role_id}")
