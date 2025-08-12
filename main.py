@@ -749,7 +749,7 @@ async def get_objectives(profile_id: int, conn = Depends(get_db_connection)):
             # Newer schema
             await cursor.execute(
                 """
-                SELECT id, profile_id, skive_subcategory, objective_text, difficulty, created_at, updated_at
+                SELECT id, profile_id, skive_subcategory, objective_basic, objective_intermediate, objective_advanced, created_at, updated_at
                 FROM role_profile_objectives
                 WHERE profile_id=%s
                 ORDER BY skive_subcategory
@@ -764,8 +764,9 @@ async def get_objectives(profile_id: int, conn = Depends(get_db_connection)):
                     "profile_id": r["profile_id"],
                     "dimension": "",
                     "subcategory": r["skive_subcategory"],
-                    "objective": r["objective_text"],
-                    "difficulty": r.get("difficulty") or "medium",
+                    "basic": r["objective_basic"],
+                    "intermediate": r["objective_intermediate"],
+                    "advanced": r["objective_advanced"],
                     "created_at": r.get("created_at"),
                     "updated_at": r.get("updated_at"),
                 }
@@ -808,57 +809,21 @@ async def save_objectives(payload: ObjectivesSavePayload, conn = Depends(get_db_
         cursor = await conn.cursor()
         count = 0
         for it in payload.items:
-            # Upsert per profile+subcategory; support legacy column name 'subcategory'
-            try:
-                await cursor.execute(
-                    """
-                    DELETE FROM role_profile_objectives
-                    WHERE profile_id=%s AND skive_subcategory=%s
-                    """,
-                    (payload.profile_id, it.subcategory)
-                )
-                await cursor.execute(
-                    """
-                    INSERT INTO role_profile_objectives (profile_id, skive_subcategory, objective_text, difficulty)
-                    VALUES (%s, %s, %s, %s)
-                    """,
-                    (payload.profile_id, it.subcategory, it.objective, it.difficulty or "medium")
-                )
-            except Exception as e:
-                logging.warning(f"Using legacy column 'subcategory' for role_profile_objectives due to: {e}")
-                await cursor.execute(
-                    """
-                    DELETE FROM role_profile_objectives
-                    WHERE profile_id=%s AND subcategory=%s
-                    """,
-                    (payload.profile_id, it.subcategory)
-                )
-                try:
-                    # Legacy with objective_text but old subcategory name
-                    await cursor.execute(
-                        """
-                        INSERT INTO role_profile_objectives (profile_id, subcategory, objective_text, difficulty)
-                        VALUES (%s, %s, %s, %s)
-                        """,
-                        (payload.profile_id, it.subcategory, it.objective, it.difficulty or "medium")
-                    )
-                except Exception as e2:
-                    logging.info(f"Falling back to fully legacy objectives schema (dimension, subcategory, objective) due to: {e2}")
-                    # Fully legacy: includes dimension and 'objective' column
-                    await cursor.execute(
-                        """
-                        DELETE FROM role_profile_objectives
-                        WHERE profile_id=%s AND dimension=%s AND subcategory=%s
-                        """,
-                        (payload.profile_id, it.dimension, it.subcategory)
-                    )
-                    await cursor.execute(
-                        """
-                        INSERT INTO role_profile_objectives (profile_id, dimension, subcategory, objective)
-                        VALUES (%s, %s, %s, %s)
-                        """,
-                        (payload.profile_id, it.dimension, it.subcategory, it.objective)
-                    )
+            # Upsert per profile+subcategory
+            await cursor.execute(
+                """
+                DELETE FROM role_profile_objectives
+                WHERE profile_id=%s AND skive_subcategory=%s
+                """,
+                (payload.profile_id, it.subcategory)
+            )
+            await cursor.execute(
+                """
+                INSERT INTO role_profile_objectives (profile_id, skive_subcategory, objective_basic, objective_intermediate, objective_advanced)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (payload.profile_id, it.subcategory, getattr(it, 'basic', ''), getattr(it, 'intermediate', ''), getattr(it, 'advanced', ''))
+            )
             count += 1
         await conn.commit()
         return {"status": "ok", "count": count}
