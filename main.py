@@ -661,6 +661,7 @@ async def get_simulation(profile_id: int, conn = Depends(get_db_connection)):
 
 # --- CONFIG SAVE (Stage 1) ---
 from pydantic import Field
+import json
 
 class SaveConfigPayload(BaseModel):
     profession: Optional[int]
