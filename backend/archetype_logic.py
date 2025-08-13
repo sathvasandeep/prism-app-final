@@ -33,11 +33,14 @@ def get_descriptor_phrase(key: str, tier: str) -> str:
     finally:
         db.close()
 
-def flatten_skive(skive: Dict[str, Dict[str, int]]) -> List[Tuple[str, int]]:
+def flatten_skive(skive: Dict) -> List[Tuple[str, int]]:
     flat = []
-    for cat in skive.values():
-        for k, v in cat.items():
-            flat.append((k, v))
+    for k, cat in skive.items():
+        if isinstance(cat, dict):
+            for subk, v in cat.items():
+                flat.append((subk, v))
+        elif isinstance(cat, int):
+            flat.append((k, cat))
     return flat
 
 def generate_archetype_narrative(skive: Dict[str, Dict[str, int]]):

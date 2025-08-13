@@ -24,3 +24,32 @@ dist-ssr
 *.sw?
 __pycache__/
 *.pyc
+# Python virtual envs
+.venv/
+venv/
+
+# Python caches
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# Env & secrets (keep only an .env.example in git)
+.env
+*.env
+
+# Test/coverage
+.coverage
+coverage.xml
+htmlcov/
+
+# Misc build caches
+.cache/
+
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
