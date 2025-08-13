@@ -2,10 +2,7 @@
 # ==================================================
 
 import os
-import json
-import re
 import logging
-import json
 import asyncio
 from typing import Dict, List, Optional
 import aiomysql
@@ -14,12 +11,11 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
-from routes import meta_async
-from routes import ai_async
 from backend.archetype_logic import generate_archetype_narrative
-from pydantic import BaseModel
-from typing import Dict
 
+# ---------------------------
+# Data model for requests
+# ---------------------------
 class ArchetypeRequest(BaseModel):
     profile_id: int
     profession: int
@@ -27,49 +23,55 @@ class ArchetypeRequest(BaseModel):
     role: int
     skive: Dict[str, Dict[str, int]]
 
-
+# ---------------------------
 # Load environment variables
-load_dotenv()
+# ---------------------------
+load_dotenv()  # Loads .env from project root
+print("DEBUG: GEMINI_API_KEY from env:", os.getenv("GEMINI_API_KEY"))
+print("DEBUG: DISABLE_AI from env:", os.getenv("DISABLE_AI"))
+API_KEY = (os.getenv("GEMINI_API_KEY") or "").strip()
+DISABLE_AI = os.getenv("DISABLE_AI", "0") == "1"
+print("DEBUG: DISABLE_AI used in code:", DISABLE_AI)
 
+# ---------------------------
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+# ---------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+logger = logging.getLogger("prism.gemini")
 
-# --- ENVIRONMENT LOADING ---
-API_KEY = os.getenv("GEMINI_API_KEY")
-DISABLE_AI = os.getenv("DISABLE_AI", "1") == "1"
-
-# Configure Gemini if API key is available
-if API_KEY:
+# ---------------------------
+# Gemini setup
+# ---------------------------
+_model = None
+if not DISABLE_AI and API_KEY:
     try:
+        logger.info("GEMINI_API_KEY loaded (tail): ...%s", API_KEY[-6:])
         genai.configure(api_key=API_KEY)
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        logging.info("Gemini client configured")
+        _model = genai.GenerativeModel("gemini-1.5-flash")
+        logger.info("Gemini client configured successfully.")
     except Exception as e:
-        logging.error(f"Gemini configure failed: {e}")
+        logger.exception("Gemini configure failed: %s", e)
         API_KEY = None
 else:
-    logging.warning("API_KEY missing – AI routes disabled.")
-
-# --- DATABASE HELPER ---
-DB_POOL = None
-
-async def create_db_pool():
-    """Create a new aiomysql pool using env vars."""
-    global DB_POOL
-    DB_POOL = await aiomysql.create_pool(
-        host=os.getenv("DB_HOST", "localhost"),
-        port=int(os.getenv("DB_PORT", "3306")),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
-        db=os.getenv("DB_NAME"),
-        autocommit=True,
-        minsize=1,
-        maxsize=5,
-    )
-    logging.info("MySQL connection pool created.")
+    if DISABLE_AI:
+        logger.warning("AI disabled via DISABLE_AI=1.")
+    else:
+        logger.warning("GEMINI_API_KEY missing – AI routes disabled.")
 
 # FastAPI app
-app = FastAPI(title="PRISM Framework API")
+app = FastAPI()
+
+# Store shared state for routers immediately after app creation
+app.state.gemini_model = _model
+app.state.disable_ai = DISABLE_AI
+
+# Only now import and include routers
+from routes import ai_async, meta_async
+app.include_router(ai_async.router, prefix="/api/ai")
+app.include_router(meta_async.router, prefix="/api")
 
 # CORS settings
 origins = [
@@ -93,9 +95,61 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-# Include modular routers
-app.include_router(meta_async.router, prefix="/api")
-app.include_router(ai_async.router, prefix="/api/ai")
+# ---------------------------
+# Wrapper to call Gemini with logging & error handling
+# ---------------------------
+def call_gemini_with_logging(model, prompt):
+    """Send prompt to Gemini with logging and basic error handling."""
+    if not model:
+        raise RuntimeError("Gemini model not configured")
+
+    logger.info("Gemini call start | prompt_len=%d preview=%r", len(prompt), prompt[:80])
+    try:
+        resp = model.generate_content(prompt)
+
+        # Log safety / block info if present
+        pf = getattr(resp, "prompt_feedback", None)
+        if pf:
+            logger.info("Prompt feedback: %s", pf)
+
+        # Log a preview of the response text
+        text = getattr(resp, "text", "") or ""
+        logger.info("Gemini call success | resp_len=%d preview=%r", len(text), text[:120])
+        return text
+
+    except Exception as e:
+        status = getattr(e, "status", None) or getattr(getattr(e, "response", None), "status_code", None)
+        body = getattr(getattr(e, "response", None), "text", None)
+        logger.error("Gemini call failed | status=%s error=%s", status, e.__class__.__name__)
+        if body:
+            logger.error("Response body: %s", body[:2000])
+        logger.debug("Full exception:", exc_info=True)
+        raise
+
+# ---------------------------
+# Example FastAPI endpoint using Gemini
+# ---------------------------
+# (Removed demo ai_test endpoint and duplicate app definition)
+
+# --- DATABASE HELPER ---
+DB_POOL = None
+
+async def create_db_pool():
+    """Create a new aiomysql pool using env vars."""
+    global DB_POOL
+    DB_POOL = await aiomysql.create_pool(
+        host=os.getenv("DB_HOST", "localhost"),
+        port=int(os.getenv("DB_PORT", "3306")),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        db=os.getenv("DB_NAME"),
+        autocommit=True,
+        minsize=1,
+        maxsize=5,
+    )
+    logging.info("MySQL connection pool created.")
+
+# (Removed duplicate app, CORS, and router includes — these already exist earlier)
 
 @app.post("/api/archetype")
 async def archetype_endpoint(payload: ArchetypeRequest):
