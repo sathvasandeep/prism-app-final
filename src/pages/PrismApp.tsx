@@ -752,7 +752,7 @@ const PrismAdminApp: FC = () => {
                   onClick={() => setStage('stage3')}
                   className={`w-full text-left px-3 py-2 rounded ${stage === 'stage3' ? 'bg-blue-600 text-white' : 'hover:bg-gray-100'}`}
                 >
-                  Stage 3 • Task Factory
+                  Stage 3 • Archetypes DNA
                 </button>
               </nav>
             </div>

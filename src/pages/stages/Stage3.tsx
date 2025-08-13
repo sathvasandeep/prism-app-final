@@ -39,33 +39,72 @@ interface Stage3Props {
 }
 
 const Stage3: React.FC<Stage3Props> = ({ profileId, profession, department, role, skiveData, professionName, departmentName, roleName }) => {
-  const [radarData, setRadarData] = useState<any>(null);
   const [archetype, setArchetype] = useState<any>(null);
   const [professionInfo, setProfessionInfo] = useState<any>(null);
+  const [globalArchetypeSummary, setGlobalArchetypeSummary] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [loadingArchetypeSummary, setLoadingArchetypeSummary] = useState(false);
+  const [archetypeSummaryError, setArchetypeSummaryError] = useState<string | null>(null);
+  const [loadingProfession, setLoadingProfession] = useState(false);
+  const [professionError, setProfessionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!profileId || !profession || !department || !role || !skiveData) return;
     setLoading(true);
-    generateArchetype({
-      profile_id: profileId,
-      profession,
-      department,
-      role,
-      skive: skiveData
-    })
-      .then(res => {
-        setRadarData(res.radarData);
-        setArchetype(res.archetype);
-        setProfessionInfo(res.professionInfo);
-        setLoading(false);
-      })
-      .catch(e => {
-        setError(e.message || "Failed to load archetype");
-        setLoading(false);
-      });
+    setError(null);
+    // List of SKIVE blocks to send one at a time, but only use for radar/archetype (not for summary/profession)
+    const blocks = [
+      { name: 'combined', data: skiveData.combined },
+      { name: 'skills', data: skiveData.skills },
+      { name: 'knowledge', data: skiveData.knowledge },
+      { name: 'identity', data: skiveData.identity },
+      { name: 'values', data: skiveData.values },
+      { name: 'ethics', data: skiveData.ethics },
+    ];
+    // Store results by block
+    const results: Record<string, any> = {};
+    let completed = 0;
+    (async () => {
+      for (const block of blocks) {
+        try {
+          const res = await generateArchetype({
+            profession,
+            department,
+            role,
+            global_archetype_profile: JSON.stringify(block.data),
+          });
+          results[block.name] = res;
+        } catch (e: any) {
+          setError(e.message || `Failed to load archetype for ${block.name}`);
+          setLoading(false);
+          return;
+        }
+        completed++;
+      }
+      // Use the combined block as the main archetype
+      setArchetype(results.combined?.archetype || null);
+      setLoading(false);
+    })();
   }, [profileId, profession, department, role, skiveData]);
+
+  const handleFetchProfessionInfo = async () => {
+    setLoadingProfession(true);
+    setProfessionError(null);
+    try {
+      const res = await generateArchetype({
+        profession,
+        department,
+        role,
+        global_archetype_profile: JSON.stringify(skiveData.combined),
+      });
+      setProfessionInfo(res.profession_info || null);
+    } catch (e: any) {
+      setProfessionError(e.message || "Failed to load profession info");
+    } finally {
+      setLoadingProfession(false);
+    }
+  };
 
   if (loading) return <div style={{ padding: 32 }}>Loading...</div>;
   if (error) return <div style={{ padding: 32, color: "red" }}>Error: {error}</div>;
@@ -73,7 +112,7 @@ const Stage3: React.FC<Stage3Props> = ({ profileId, profession, department, role
   return (
     <div className="p-6 md:p-10 max-w-6xl mx-auto">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
-        <h1 className="text-2xl md:text-3xl font-bold text-blue-900">Stage 3: Archetypes</h1>
+        <h1 className="text-2xl md:text-3xl font-bold text-blue-900">Stage 3: Archetypes DNA</h1>
         <div className="flex flex-col md:flex-row gap-2 md:gap-6 mt-2 md:mt-0 text-sm md:text-base">
           <span className="bg-blue-50 text-blue-800 px-3 py-1 rounded font-medium">Profession: {professionName || professionInfo?.title || profession}</span>
           <span className="bg-green-50 text-green-800 px-3 py-1 rounded font-medium">Department: {departmentName || department}</span>
@@ -100,24 +139,92 @@ const Stage3: React.FC<Stage3Props> = ({ profileId, profession, department, role
           <h3 className="text-lg font-medium text-blue-800 mb-1">Archetype: {archetype?.name}</h3>
           <h4 className="text-md font-medium text-purple-700 mb-2">Global Archetype: {archetype?.globalName}</h4>
           <p className="text-gray-700 mb-2">{archetype?.narrative}</p>
+
+          {/* AI-generated summary of global archetype profile (on-demand) */}
+          <div className="my-3">
+            <button
+              className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition mb-2"
+              onClick={async () => {
+                setLoadingArchetypeSummary(true);
+                setArchetypeSummaryError(null);
+                try {
+                  const res = await generateArchetype({
+                    profession,
+                    department,
+                    role,
+                    global_archetype_profile: JSON.stringify(skiveData.combined),
+                  });
+                  setGlobalArchetypeSummary(res.global_archetype_summary || "");
+                } catch (e: any) {
+                  setArchetypeSummaryError(e.message || "Failed to load archetype summary");
+                } finally {
+                  setLoadingArchetypeSummary(false);
+                }
+              }}
+              disabled={loadingArchetypeSummary}
+            >
+              {loadingArchetypeSummary ? "Loading..." : "Load Archetype Summary"}
+            </button>
+            {archetypeSummaryError && (
+              <div className="text-red-600 text-sm mb-2">{archetypeSummaryError}</div>
+            )}
+            {globalArchetypeSummary && (
+              <div className="bg-blue-50 border border-blue-200 rounded p-3 my-3">
+                <h5 className="font-semibold text-blue-700 mb-1">AI-Generated Global Archetype Summary</h5>
+                <p className="text-blue-900 text-sm">{globalArchetypeSummary}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Profession Info Section (on-demand) */}
           <div className="mt-4">
             <h4 className="font-semibold text-gray-800 mb-1">Profession Info</h4>
-            <ul className="list-disc ml-5 text-gray-600 text-sm">
-              <li><b>Years to Role:</b> {professionInfo?.yearsToRole}</li>
-              <li><b>Qualifications:</b> {professionInfo?.qualifications?.join(", ")}</li>
-              <li><b>Certifications:</b> {professionInfo?.certifications?.join(", ")}</li>
-              <li><b>Salary Range:</b> {professionInfo?.salaryRange}</li>
-              <li><b>Perks:</b> {professionInfo?.perks?.join(", ")}</li>
-              <li><b>Highs:</b> {professionInfo?.highs}</li>
-              <li><b>Lows:</b> {professionInfo?.lows}</li>
-              <li><b>Career Pathway:</b> {professionInfo?.careerPathway}</li>
-            </ul>
-            {professionInfo?.videoUrl && (
+            {!professionInfo && (
+              <button
+                className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition mb-2"
+                onClick={async () => {
+                  setLoadingProfession(true);
+                  setProfessionError(null);
+                  try {
+                    const res = await generateArchetype({
+                      profession,
+                      department,
+                      role,
+                      global_archetype_profile: JSON.stringify(skiveData.combined),
+                    });
+                    setProfessionInfo(res.profession_info || null);
+                  } catch (e: any) {
+                    setProfessionError(e.message || "Failed to load profession info");
+                  } finally {
+                    setLoadingProfession(false);
+                  }
+                }}
+                disabled={loadingProfession}
+              >
+                {loadingProfession ? "Loading..." : "Load Profession Info"}
+              </button>
+            )}
+            {professionError && (
+              <div className="text-red-600 text-sm mb-2">{professionError}</div>
+            )}
+            {professionInfo && (
+              <ul className="list-disc ml-5 text-gray-600 text-sm space-y-1">
+                <li><b>Years to Role:</b> {professionInfo?.years_to_role}</li>
+                <li><b>Qualifications:</b> {Array.isArray(professionInfo?.qualifications) ? professionInfo.qualifications.join(", ") : (professionInfo?.qualifications || "-")}</li>
+                <li><b>Certifications:</b> {Array.isArray(professionInfo?.certifications) ? professionInfo.certifications.join(", ") : (professionInfo?.certifications || "-")}</li>
+                <li><b>Salary Range:</b> {professionInfo?.salary_range}</li>
+                <li><b>Perks:</b> {Array.isArray(professionInfo?.perks) ? professionInfo.perks.join(", ") : (professionInfo?.perks || "-")}</li>
+                <li><b>Highs:</b> {professionInfo?.highs}</li>
+                <li><b>Lows:</b> {professionInfo?.lows}</li>
+                <li><b>Career Pathway:</b> {professionInfo?.career_pathway}</li>
+              </ul>
+            )}
+            {professionInfo?.video_url && (
               <div className="mt-4">
                 <iframe
                   width="100%"
                   height="236"
-                  src={professionInfo?.videoUrl}
+                  src={professionInfo?.video_url}
                   title="Profession Video"
                   frameBorder="0"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"

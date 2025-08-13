@@ -36,22 +36,29 @@ export async function generateObjectives(key: { profession: number|null; departm
 }
 
 export async function generateArchetype(payload: {
-  profile_id: number;
   profession: number;
   department: number;
   role: number;
-  skive: Record<string, Record<string, number>>;
+  global_archetype_profile?: string;
 }) {
-  const res = await fetch('/api/archetype', {
+  // Convert numbers to strings for backend compatibility
+  const reqBody = {
+    profession: payload.profession?.toString() ?? undefined,
+    department: payload.department?.toString() ?? undefined,
+    role: payload.role?.toString() ?? undefined,
+    global_archetype_profile: payload.global_archetype_profile,
+  };
+  const res = await fetch('/api/ai/archetype_info', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(reqBody),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json() as Promise<{
-    radarData: Record<string, Record<string, number>>;
-    archetype: { name: string; narrative: string; globalName: string };
-    professionInfo: any;
+    archetype: any;
+    global_archetype_summary: string;
+    profession_info: any;
+    source: string;
   }>;
 }
 

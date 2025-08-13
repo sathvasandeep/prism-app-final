@@ -68,6 +68,29 @@ app = FastAPI()
 app.state.gemini_model = _model
 app.state.disable_ai = DISABLE_AI
 
+# --- MySQL Pool Startup/Shutdown ---
+@app.on_event("startup")
+async def startup_event():
+    app.state.mysql_pool = await aiomysql.create_pool(
+        host=os.getenv("DB_HOST", "localhost"),
+        port=int(os.getenv("DB_PORT", "3306")),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        db=os.getenv("DB_NAME"),
+        minsize=1,
+        maxsize=10,
+        pool_recycle=280,
+        autocommit=True,
+    )
+    logging.info("MySQL connection pool created.")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    pool = app.state.mysql_pool
+    pool.close()
+    await pool.wait_closed()
+    logging.info("MySQL connection pool closed.")
+
 # Only now import and include routers
 from routes import ai_async, meta_async
 app.include_router(ai_async.router, prefix="/api/ai")
@@ -146,6 +169,7 @@ async def create_db_pool():
         autocommit=True,
         minsize=1,
         maxsize=5,
+        pool_recycle=280,  # Recycle connections before MySQL wait_timeout
     )
     logging.info("MySQL connection pool created.")
 

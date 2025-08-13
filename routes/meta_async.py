@@ -6,28 +6,18 @@ from fastapi import APIRouter, Depends, HTTPException
 
 router = APIRouter()
 
-async def get_conn():
-    conn = await aiomysql.connect(
-        host=os.getenv("DB_HOST", "localhost"),
-        port=int(os.getenv("DB_PORT", "3306")),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
-        db=os.getenv("DB_NAME"),
-        autocommit=True,
-    )
-    try:
+from fastapi import Request
+
+async def get_conn(request: Request):
+    pool = request.app.state.mysql_pool
+    async with pool.acquire() as conn:
         yield conn
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
 
 @router.get("/professions")
 async def get_professions(conn = Depends(get_conn)):
     try:
         cursor = await conn.cursor(aiomysql.DictCursor)
-        await cursor.execute("SELECT id, name FROM professions ORDER BY id")
+        await cursor.execute("SELECT id, name FROM professions ORDER BY id LIMIT 20")
         rows = await cursor.fetchall()
         await cursor.close()
         return rows
